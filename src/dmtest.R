@@ -51,3 +51,43 @@ errors_rf_3m <- actual_3m - rf_3m
 errors_ridge_3m <- actual_3m - ridge_3m
 
 # DM Test 
+run_dm <- function(errors_list, horizon, model_names) {
+  n_models <- length(errors_list)
+  
+  # Results Matrix (We are doing pair-wise DM Test)
+  results <- matrix(NA, nrow = n_models, ncol = n_models)
+  rownames(results) <- model_names
+  colnames(results) <- model_names
+  
+  # Fill matrix with p-values
+  for (i in 1:(n_models-1)) { # running pairwise so we do i-j
+    for (j in (i+1):n_models) {
+      test_result <- dm.test(errors_list[[i]], errors_list[[j]], 
+                             h = horizon, alternative = "two.sided")
+      results[i, j] <- test_result$p.value
+      results[j, i] <- test_result$statistic
+    }
+  }
+  
+  return(results)
+}
+
+models_1m <- list(
+  errors_pcr_targeted_1m,
+  errors_xgb_1m,
+  errors_rf_1m,
+  errors_ridge_1m
+)
+
+models_3m <- list(
+  errors_pcr_targeted_3m,
+  errors_xgb_3m,
+  errors_rf_3m,
+  errors_ridge_3m
+)
+
+model_names <- c("Targeted PCR", "XGBoost", "Random Forest", "Ridge")
+
+# Run all pairwise tests
+results_1m <- run_dm(models_1m, 1, model_names)
+print(results_1m)

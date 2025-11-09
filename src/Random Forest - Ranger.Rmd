@@ -1,0 +1,154 @@
+---
+title: "Random Forest"
+author: "delete EC4308"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Remove all data first
+```{r}
+rm(list = ls())
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(ranger) # randomFroest faster alternative
+library(tictoc) # measure time
+library(tidyverse) # data cleaning and plotting
+library(forecast) # DM test
+```
+
+# data cleaning process
+```{r}
+# Keep row of required transformations aside first
+df <- read_csv("../data/cleaned_fred2.csv") %>% filter(year >= 1985)
+test_dataset <- df %>% filter(sasdate >= "2015-01-01")
+### --- Define our target variables: 1-month inflation rate and 3-month cumulative inflation rate --- ###
+df1 <- df %>%
+  mutate(
+    # Monthly inflation rate
+    inflationRate_1m = 100 * (log_coreCPI - lag(log_coreCPI, 1)),
+    # Next month's inflation
+    inflationRate_1m_future = lead(inflationRate_1m, 1),
+    # 3-month cumulative inflation
+    inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
+    # 3-month-ahead cumulative inflation
+    inflationRate_3m_future = lead(inflationRate_3m, 3)
+  ) %>%
+  select(-c(CPILFESL, log_coreCPI, log_lagcoreCPI, inflationRate,sasdate,year,month, inflationRate_1m, inflationRate_3m) ) %>% as.matrix()
+
+rownames(df1)<- as.character(df$sasdate) # set the column name for readability
+```
+
+# Run the Random Forest
+```{r, echo=FALSE}
+set.seed(123) # for consistent replication, not sure if this is needed here
+window.number <- 127 # used later to signify number of rolling window operations
+
+# Running Random Forest
+# Quick guide: df1 refers to the dataset, window.number is the number of rolling windows conducted, the third argument refers to the indice where the inflationrate column is, the last argument is to generate the different step forecases
+
+tic() 
+source("random forest (ranger).R")# load the functions
+onemonth <- which(colnames(df1) == "inflationRate_1m_future")
+threemonth <- which(colnames(df1) == "inflationRate_3m_future")
+rf1c=rf.rolling.window(df1,window.number,onemonth) # 1-step forecast
+rf3c=rf.rolling.window(df1,window.number,threemonth) # 3-step forecast
+toc() # measures the time taken, anywhere between 2-4 mins
+```
+
+# run the DM test and RMSE
+
+```{r}
+dates <- as.Date(rownames(df1))
+rmse.rf1c <- sqrt(mean((rf1c$actual - rf1c$pred)^2, na.rm = TRUE))
+rmse.rf3c <- sqrt(mean((rf3c$actual - rf3c$pred)^2, na.rm = TRUE))
+
+mae.rf1c <- mean(abs(rf1c$actual - rf1c$pred), na.rm = TRUE)
+mae.rf3c <- mean(abs(rf3c$actual - rf3c$pred), na.rm = TRUE)
+c(rmse.rf1c, mae.rf1c, rmse.rf3c, mae.rf3c)
+```
+# Save results 
+```{r}
+rf_results <- list(
+  rf_1m = rf1c,
+  rf_3m = rf3c,
+  data_info = list(
+    n_forecasts_1m = sum(!is.na(rf1c$pred)),
+    n_forecasts_3m = sum(!is.na(rf3c$pred)),
+    date_range = range(dates)  
+  )
+)
+
+# (DONT RUN rf_results btw, unless you want your R to lag :D)
+# saving for dm test later
+# save(rf_results, file = "../modelresults/rf_results.RData")
+```
+# plot graph
+```{r}
+
+# make time series data frame
+start_date <- as.Date(test_dataset$sasdate[1])
+end_date <- as.Date(test_dataset$sasdate[nrow(test_dataset)])
+
+timeseries.1month =ts(cbind(rf1c$actual, rf1c$pred), 
+                         start = c(as.numeric(format(start_date, "%Y")),
+                        as.numeric(format(start_date, "%m"))),
+              end = c(as.numeric(format(end_date, "%Y")),
+                      as.numeric(format(end_date, "%m"))),freq=12)
+
+
+timeseries.3month =ts(cbind(rf3c$actual, rf3c$pred), 
+                         start = c(as.numeric(format(start_date, "%Y")),
+                        as.numeric(format(start_date, "%m"))),
+              end = c(as.numeric(format(end_date, "%Y")),
+                      as.numeric(format(end_date, "%m"))),freq=12)
+
+# Create a sequence of dates for monthly data
+dates <- seq(from = start_date, to = end_date, by = "month")
+
+# Convert to data frame for ggplot
+df_plot_1month <- data.frame(
+  Date = dates,
+  TrueValue = as.numeric(timeseries.1month[, 1]),
+  RandomForest = as.numeric(timeseries.1month[, 2])
+)
+
+df_plot_3month <- data.frame(
+  Date = dates,
+  TrueValue = as.numeric(timeseries.3month[, 1]),
+  RandomForest = as.numeric(timeseries.3month[, 2])
+)
+
+# plot the graphs
+
+# 1-step ML forecasts
+ggplot(df_plot_1month, aes(x = Date)) +
+  geom_line(aes(y = TrueValue, color = "True Value"), linewidth = 1) +
+  geom_line(aes(y = RandomForest, color = "Random Forest"), linewidth = 1) +
+  scale_color_manual(values = c("True Value" = "black", "Random Forest" = "blue")) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +  
+  labs(title = "1-step ML forecast",x = "Date",y = "CPI Inflation",color = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, hjust = 1))
+
+# 3-step ML forecasts
+ggplot(df_plot_3month, aes(x = Date)) +
+  geom_line(aes(y = TrueValue, color = "True Value"), linewidth = 1) +
+  geom_line(aes(y = RandomForest, color = "Random Forest"), linewidth = 1) +
+  scale_color_manual(values = c("True Value" = "black", "Random Forest" = "blue")) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +  
+  labs(title = "3-step ML forecasts",x = "Date",y = "CPI Inflation",color = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+save.image("../modelresults/Random Forest - Ranger.RData")
+```

@@ -90,4 +90,6 @@ model_names <- c("Targeted PCR", "XGBoost", "Random Forest", "Ridge")
 
 # Run all pairwise tests
 results_1m <- run_dm(models_1m, 1, model_names)
+results_3m <- run_dm(models_3m, 3, model_names)
 print(results_1m)
+print(results_3m)

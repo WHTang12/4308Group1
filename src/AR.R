@@ -17,7 +17,15 @@ df1 <- df %>%
     # 3-month cumulative inflation
     inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
     # 3-month-ahead cumulative inflation
-    inflationRate_3m_future = lead(inflationRate_3m, 3)
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    # 6-month-ahead cumulative inflation
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    # 12-month-ahead cumulative inflation
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
   )
 
 ### --- Define training set: 1985 to 2014 --- ###
@@ -78,8 +86,18 @@ sel_1m <- ar_bic_select(train_df$inflationRate_1m_future,
 sel_3m <- ar_bic_select(train_df$inflationRate_3m_future,
                         train_df$inflationRate_1m,
                         p_max = 8)
+
+sel_6m <- ar_bic_select(train_df$inflationRate_6m_future,
+                        train_df$inflationRate_1m,
+                        p_max = 8)
+
+sel_12m <- ar_bic_select(train_df$inflationRate_12m_future,
+                        train_df$inflationRate_1m,
+                        p_max = 8)
 print(sel_1m$best_p) # 6
 print(sel_3m$best_p) # 8
+print(sel_6m$best_p) # 7
+print(sel_12m$best_p) # 7
 
 ### --- Model Evaluation using rolling window --- ###
 roll_ar_forecast <- function(y_target, x_infl, p, nprev) {
@@ -170,8 +188,26 @@ result_3m <- roll_ar_forecast(df_eval$inflationRate_3m_future,
 result_3m$RMSE
 result_3m$MAE
 
+# 6-month-ahead model (AR(8))
+result_6m <- roll_ar_forecast(df_eval$inflationRate_6m_future,
+                              df_eval$inflationRate_1m,
+                              p = 7,
+                              nprev = 121)
+result_6m$RMSE
+result_6m$MAE
+
+# 12-month-ahead model (AR(8))
+result_12m <- roll_ar_forecast(df_eval$inflationRate_12m_future,
+                              df_eval$inflationRate_1m,
+                              p = 7,
+                              nprev = 115)
+result_12m$RMSE
+result_12m$MAE
+
 cat("1-month AR(6): RMSE =", result_1m$RMSE, " MAE =", result_1m$MAE, "\n")
 cat("3-month-ahead AR(8): RMSE =", result_3m$RMSE, " MAE =", result_3m$MAE, "\n")
+cat("6-month AR(7): RMSE =", result_6m$RMSE, " MAE =", result_6m$MAE, "\n")
+cat("12-month-ahead AR(7): RMSE =", result_12m$RMSE, " MAE =", result_12m$MAE, "\n")
 
 plot(result_1m$actual, type = "l", col = "black",
      main = "AR(6) Rolling Forecast (1-month-ahead)", ylab = "Inflation", xlab = "Time")
@@ -186,7 +222,9 @@ legend("topleft", legend = c("Actual", "Forecast"), col = c("black","blue"), lty
 ### --- Save results for dm test and plot later --- ###
 results_ar_models <- list(
   ar_1m = result_1m,
-  ar_3m = result_3m
+  ar_3m = result_3m,
+  ar_6m = result_6m,
+  ar_12m = result_12m
 )
 
 #saveRDS(results_ar_models, file = "../modelresults/ar_model_results.rds")

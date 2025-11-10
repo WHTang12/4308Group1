@@ -1,0 +1,172 @@
+---
+title: "Lasso"
+author: "JH"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Remove all data first
+```{r}
+rm(list = ls())
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(glmnet)
+library(gbm)
+library(hdm)
+library(rpart)
+library(tictoc)
+library(tidyverse)
+library(ggplot2)
+```
+
+# read  and prepare data
+```{r}
+# Keep row of required transformations aside first
+df <- read_csv("../data/cleaned_fred2.csv")
+test_dataset <- df %>% filter(sasdate >= "2015-01-01")
+window.number = nrow(test_dataset)
+### --- Define our target variables: 1-month inflation rate and 3-month cumulative inflation rate --- ###
+df1 <- df %>%
+  mutate(
+    # Monthly inflation rate
+    inflationRate_1m = 100 * (log_coreCPI - lag(log_coreCPI, 1)),
+    # Next month's inflation
+    inflationRate_1m_future = lead(inflationRate_1m, 1),
+    # 3-month cumulative inflation
+    inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
+    # 3-month-ahead cumulative inflation
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    # 6-month-ahead cumulative inflation
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    # 12-month-ahead cumulative inflation
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
+  ) %>%
+  select(-c(CPILFESL, log_coreCPI, log_lagcoreCPI, inflationRate, sasdate, year, month)) %>% 
+  as.matrix()
+
+df1 <- df1[df$year >= 1985, ]
+rownames(df1) <- as.character(df$sasdate[df$year >= 1985])  # Filter row names too
+
+```
+
+```{r}
+
+# --- LASSO rolling window function (fixed) ---
+lasso.rolling.window <- function(Y, nprev, window.size, target_col) {
+  n <- nrow(Y)
+
+  max_iter <- nprev
+  save.pred <- rep(NA, max_iter)
+  save.lambda <- rep(NA, max_iter)
+  actual.value <- rep(NA, max_iter)
+
+  for (i in 1:max_iter) {
+    
+    # training window indices
+    train_start <- i
+    train_end <- i + window.size - 1
+    test_index <- train_end + 1
+
+    if (test_index > n) break  # stop if exceed data length
+    actual.value[i] <- Y[test_index , target_col]
+    
+    other_target_cols <- c("inflationRate_1m_future", "inflationRate_3m_future", 
+                 "inflationRate_6m_future", "inflationRate_12m_future")
+    other_target_indices <- which(colnames(Y) %in% other_target_cols)
+    
+    y_train <- Y[train_start:train_end, target_col]
+    x_train <- Y[train_start:train_end, -other_target_indices]
+    x_test <- Y[test_index, -other_target_indices, drop = FALSE] 
+    
+    if (anyNA(y_train)) break # basically at the end, when we forecast, theres missing values, so we just break
+    # LASSO with CV
+    cvfit <- cv.glmnet(x_train, y_train, alpha = 1, nfolds = 5)
+    best_lambda <- cvfit$lambda.min
+    save.lambda[i] <- best_lambda
+
+    pred <- predict(cvfit, newx = x_test, s = "lambda.min")
+    save.pred[i] <- pred
+    
+
+    cat("iteration", i, "done\n")
+    
+  }
+
+  list(pred = save.pred, lambda = save.lambda, actual = actual.value)
+}
+
+# --- Run LASSO ---
+set.seed(123)
+tic()
+onemonth <- which(colnames(df1) == "inflationRate_1m_future")
+threemonth <- which(colnames(df1) == "inflationRate_3m_future")
+sixmonth <- which(colnames(df1) == "inflationRate_6m_future")
+twelvemonth <- which(colnames(df1) == "inflationRate_12m_future")
+lasso1c <- lasso.rolling.window(df1, nprev = window.number, window.size = 360, onemonth)
+lasso3c <- lasso.rolling.window(df1, nprev = window.number, window.size = 360, threemonth)
+lasso6c <- lasso.rolling.window(df1, nprev = window.number, window.size = 360, sixmonth)
+lasso12c <- lasso.rolling.window(df1, nprev = window.number, window.size = 360, twelvemonth)
+toc()
+
+# --- Compute RMSE ---
+rmse_1month <- sqrt(mean((lasso1c$actual - lasso1c$pred)^2, na.rm = TRUE))
+rmse_3month <- sqrt(mean((lasso3c$actual - lasso3c$pred)^2, na.rm = TRUE))
+rmse_6month <- sqrt(mean((lasso6c$actual - lasso6c$pred)^2, na.rm = TRUE))
+rmse_12month <- sqrt(mean((lasso12c$actual - lasso12c$pred)^2, na.rm = TRUE))
+
+# --- Compute MAE ---
+mae_1month <- mean(abs(lasso1c$actual - lasso1c$pred), na.rm = TRUE)
+mae_3month <- mean(abs(lasso3c$actual - lasso3c$pred), na.rm = TRUE)
+mae_6month <- mean(abs(lasso6c$actual - lasso6c$pred), na.rm = TRUE)
+mae_12month <- mean(abs(lasso12c$actual - lasso12c$pred), na.rm = TRUE)
+
+cat("1m rmse/mae:", rmse_1month, mae_1month)
+cat("3m rmse/mae:", rmse_3month, mae_3month)
+cat("6m rmse/mae:", rmse_6month, mae_6month)
+cat("12m rmse/mae:", rmse_12month, mae_12month)
+
+#save
+results_lasso_models <- list(
+  lasso1m = lasso1c,
+  lasso3m = lasso3c,
+  lasso6m = lasso6c,
+  lasso12m = lasso12c
+  )
+
+#saveRDS(results_lasso_models, file = "../modelresults/lasso_model_results.rds")
+
+# --- Plot forecasts ---
+plot_df1 <- data.frame(Date = as.Date(test_dataset$sasdate[1:length(lasso1c$actual)]),
+                       True = as.numeric(lasso1c$actual),
+                       Pred = as.numeric(lasso1c$pred) )
+ggplot(plot_df1, aes(x = Date)) +
+  geom_line(aes(y = True, color = "True value"), linewidth = 1) +
+  geom_line(aes(y = Pred, color = "LASSO"), linewidth = 1) +
+  scale_color_manual(values = c("True value" = "black", "LASSO" = "purple")) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
+  labs(title = "1-step LASSO Forecast",x = "Date", y = "CPI Inflation",  color = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, hjust = 1))
+
+plot_df3 <- data.frame(Date = as.Date(test_dataset$sasdate[1:length(lasso3c$actual)]),
+                       True = lasso3c$actual,
+                       Pred = lasso3c$pred)
+ggplot(plot_df3, aes(x = Date)) +
+  geom_line(aes(y = True, color = "True value"), linewidth = 1) +
+  geom_line(aes(y = Pred, color = "LASSO"), linewidth = 1) +
+  scale_color_manual(values = c("True value" = "black", "LASSO" = "purple")) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") + 
+  labs(title = "3-step LASSO Forecast", y = "CPI Inflation", x = "") +
+  theme_minimal() +
+  theme(legend.position = "bottom",axis.text.x = element_text(angle = 45, hjust = 1))
+
+```

@@ -18,7 +18,15 @@ data <- data %>%
     
     # 3-month cumulative inflation
     inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
-    inflationRate_3m_future = lead(inflationRate_3m, 3)
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
   )
 
 # Remove missing rows
@@ -44,7 +52,9 @@ X_full <- data %>%
   select(-sasdate, -year, -month,
          -inflationRate_1m, -inflationRate_1m_future,
          -inflationRate_3m, -inflationRate_3m_future,
-         -CPILFESL, -log_coreCPI, log_lagcoreCPI, inflationRate) %>%
+         -inflationRate_6m, -inflationRate_6m_future,
+         -inflationRate_12m, -inflationRate_12m_future,
+         -CPILFESL, -log_coreCPI, -log_lagcoreCPI, -inflationRate) %>%
   as.matrix()
 
 ############################################################
@@ -102,13 +112,6 @@ mae_1m <- mean(abs(ridge_forecasts_1m - true_values), na.rm = TRUE)
 cat("\nRMSE (1-month-ahead):", rmse_1m, "\n")
 cat("MAE (1-month-ahead):", mae_1m, "\n")
 
-
-# Plot
-# plot(test_data$sasdate, true_values, type = "l", col = "black", lwd = 2,
-#      ylab = "Inflation Rate", xlab = "Date",
-#      main = "Ridge Forecast (1-month-ahead)")
-# lines(test_data$sasdate, ridge_forecasts_1m, col = "blue", lwd = 2)
-# legend("topleft", legend = c("Actual", "Forecast"), col = c("black", "blue"), lwd = 2)
 
 # Export 1-month-ahead forecast results
 ridge_results_1m <- data.frame(
@@ -175,13 +178,6 @@ cat("\nRMSE (3-month-ahead):", rmse_3m, "\n")
 cat("MAE (3-month-ahead):", mae_3m, "\n")
 
 
-# Plot
-# plot(test_data$sasdate, true_values, type = "l", col = "black", lwd = 2,
-#      ylab = "3-month cumulative inflation", xlab = "Date",
-#      main = "Ridge Forecast (3-month-ahead)")
-# lines(test_data$sasdate, ridge_forecasts_3m, col = "red", lwd = 2)
-# legend("topleft", legend = c("Actual", "Forecast"), col = c("black", "red"), lwd = 2)
-
 # Export 3-month-ahead forecast results
 ridge_results_3m <- data.frame(
   date = test_data$sasdate,
@@ -190,3 +186,124 @@ ridge_results_3m <- data.frame(
 )
 #write.csv(ridge_results_3m, "../modelresults/ridge_forecast_3month_ahead.csv", row.names = FALSE)
 cat("Saved: ridge_forecast_3month_ahead.csv\n")
+
+#### START HERE ####
+
+############################################################
+## 6. 6-MONTH-AHEAD MODEL (train & predict inflationRate_6m)
+############################################################
+cat("\n=== Running 6-month-ahead Ridge Forecast (inflationRate_6m) ===\n")
+
+y_full <- data$inflationRate_6m
+true_values <- test_data$inflationRate_6m_future
+ridge_forecasts_6m <- rep(NA, n_test)
+
+for (i in seq_along(test_data$sasdate)) {  # for loop for each month from Jan 2015 to Jul 2025
+  forecast_date <- test_data$sasdate[i]
+  idx_forecast <- which(dates_full == forecast_date)  # finds row number of date that matches forecast_date
+  
+  # Define rolling training window
+  idx_train <- (idx_forecast - 4 - window_size + 1):(idx_forecast - 4)  # finds range of row numbers for relevant predictor data
+  # e.g. to predict Jan 2015, train data from Oct 1984 to Sep 2014 to predict inflation from Jan 1985 to Dec 2014 respectively
+  # check if indexes lie within the range of (1, T) where T is total no of obs in dataset
+  if (min(idx_train - lag_max) < 1 || (idx_forecast + 3) > T) next
+  
+  # Training target and predictors
+  y_train <- y_full[idx_train + 3]  # model trained to use predictors in row idx_train to predict inflation in row idx_train + 3
+  # train model to predict using last lag_max lags also
+  inflation_lags_train <- t(sapply(idx_train, function(j) y_full[(j - lag_max):(j - 1)]))
+  # combined predictors used in training
+  X_train <- cbind(X_full[idx_train, , drop = FALSE], inflation_lags_train)
+  
+  # Forecast input
+  last_train_idx <- idx_train[length(idx_train)]  # row index number of last training data in window
+  # pick out last lag_max lags to use as predictors
+  inflation_lags_forecast <- matrix(y_full[(last_train_idx - lag_max + 1):last_train_idx], nrow = 1)
+  # combined predictors used in prediction
+  X_forecast <- cbind(matrix(X_full[last_train_idx, ], nrow = 1), inflation_lags_forecast)
+  
+  # Ridge fit and BIC selection
+  lambda_grid <- 10^seq(4, -3, length = 100)
+  ridge_fit <- glmnet(X_train, y_train, alpha = 0, lambda = lambda_grid, standardize = TRUE)
+  n <- length(y_train)
+  mse_vals <- colSums((y_train - predict(ridge_fit, X_train))^2) / n
+  ridge_df <- ridge_fit$df
+  bic_vals <- log(mse_vals) + log(n) * ridge_df / n
+  lambda_bic <- lambda_grid[which.min(bic_vals)]
+  
+  # Fit final model and forecast
+  final_fit <- glmnet(X_train, y_train, alpha = 0, lambda = lambda_bic, standardize = TRUE)
+  ridge_forecasts_3m[i] <- predict(final_fit, X_forecast)
+  
+  if (i %% 12 == 0) cat("Forecasted up to:", as.character(forecast_date), "\n")  # print flags to follow progress
+}
+
+# Evaluate
+rmse_3m <- sqrt(mean((ridge_forecasts_3m - true_values)^2, na.rm = TRUE))
+mae_3m <- mean(abs(ridge_forecasts_3m - true_values), na.rm = TRUE)
+cat("\nRMSE (3-month-ahead):", rmse_3m, "\n")
+cat("MAE (3-month-ahead):", mae_3m, "\n")
+
+
+# Export 3-month-ahead forecast results
+ridge_results_3m <- data.frame(
+  date = test_data$sasdate,
+  actual = true_values,
+  forecast = ridge_forecasts_3m
+)
+
+
+############################################################
+## 6. 12-MONTH-AHEAD MODEL (train & predict inflationRate_12m)
+############################################################
+cat("\n=== Running 6-month-ahead Ridge Forecast (inflationRate_6m) ===\n")
+
+y_full <- data$inflationRate_6m
+true_values <- test_data$inflationRate_6m_future
+ridge_forecasts_6m <- rep(NA, n_test)
+
+for (i in seq_along(test_data$sasdate)) {  # for loop for each month from Jan 2015 to Jul 2025
+  forecast_date <- test_data$sasdate[i]
+  idx_forecast <- which(dates_full == forecast_date)  # finds row number of date that matches forecast_date
+  
+  # Define rolling training window
+  idx_train <- (idx_forecast - 4 - window_size + 1):(idx_forecast - 4)  # finds range of row numbers for relevant predictor data
+  # e.g. to predict Jan 2015, train data from Oct 1984 to Sep 2014 to predict inflation from Jan 1985 to Dec 2014 respectively
+  # check if indexes lie within the range of (1, T) where T is total no of obs in dataset
+  if (min(idx_train - lag_max) < 1 || (idx_forecast + 3) > T) next
+  
+  # Training target and predictors
+  y_train <- y_full[idx_train + 3]  # model trained to use predictors in row idx_train to predict inflation in row idx_train + 3
+  # train model to predict using last lag_max lags also
+  inflation_lags_train <- t(sapply(idx_train, function(j) y_full[(j - lag_max):(j - 1)]))
+  # combined predictors used in training
+  X_train <- cbind(X_full[idx_train, , drop = FALSE], inflation_lags_train)
+  
+  # Forecast input
+  last_train_idx <- idx_train[length(idx_train)]  # row index number of last training data in window
+  # pick out last lag_max lags to use as predictors
+  inflation_lags_forecast <- matrix(y_full[(last_train_idx - lag_max + 1):last_train_idx], nrow = 1)
+  # combined predictors used in prediction
+  X_forecast <- cbind(matrix(X_full[last_train_idx, ], nrow = 1), inflation_lags_forecast)
+  
+  # Ridge fit and BIC selection
+  lambda_grid <- 10^seq(4, -3, length = 100)
+  ridge_fit <- glmnet(X_train, y_train, alpha = 0, lambda = lambda_grid, standardize = TRUE)
+  n <- length(y_train)
+  mse_vals <- colSums((y_train - predict(ridge_fit, X_train))^2) / n
+  ridge_df <- ridge_fit$df
+  bic_vals <- log(mse_vals) + log(n) * ridge_df / n
+  lambda_bic <- lambda_grid[which.min(bic_vals)]
+  
+  # Fit final model and forecast
+  final_fit <- glmnet(X_train, y_train, alpha = 0, lambda = lambda_bic, standardize = TRUE)
+  ridge_forecasts_3m[i] <- predict(final_fit, X_forecast)
+  
+  if (i %% 12 == 0) cat("Forecasted up to:", as.character(forecast_date), "\n")  # print flags to follow progress
+}
+
+# Evaluate
+rmse_3m <- sqrt(mean((ridge_forecasts_3m - true_values)^2, na.rm = TRUE))
+mae_3m <- mean(abs(ridge_forecasts_3m - true_values), na.rm = TRUE)
+cat("\nRMSE (3-month-ahead):", rmse_3m, "\n")
+cat("MAE (3-month-ahead):", mae_3m, "\n")

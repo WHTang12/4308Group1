@@ -21,7 +21,6 @@ library(ggplot2)
 library(ranger) # randomFroest faster alternative
 library(tictoc) # measure time
 library(tidyverse) # data cleaning and plotting
-library(forecast) # DM test
 ```
 
 # data cleaning process
@@ -39,9 +38,19 @@ df1 <- df %>%
     # 3-month cumulative inflation
     inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
     # 3-month-ahead cumulative inflation
-    inflationRate_3m_future = lead(inflationRate_3m, 3)
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    # 6-month-ahead cumulative inflation
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    # 12-month-ahead cumulative inflation
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
   ) %>%
-  select(-c(CPILFESL, log_coreCPI, log_lagcoreCPI, inflationRate,sasdate,year,month, inflationRate_1m, inflationRate_3m) ) %>% as.matrix()
+  select(-c(CPILFESL, log_coreCPI, log_lagcoreCPI, inflationRate, sasdate, year, month, 
+            inflationRate_1m, inflationRate_3m, inflationRate_6m, inflationRate_12m)) %>% 
+  as.matrix()
 
 rownames(df1)<- as.character(df$sasdate) # set the column name for readability
 ```
@@ -58,8 +67,12 @@ tic()
 source("random forest (ranger).R")# load the functions
 onemonth <- which(colnames(df1) == "inflationRate_1m_future")
 threemonth <- which(colnames(df1) == "inflationRate_3m_future")
+sixmonth <- which(colnames(df1) == "inflationRate_6m_future")
+twelvemonth <- which(colnames(df1) == "inflationRate_12m_future")
 rf1c=rf.rolling.window(df1,window.number,onemonth) # 1-step forecast
 rf3c=rf.rolling.window(df1,window.number,threemonth) # 3-step forecast
+rf6c=rf.rolling.window(df1,window.number,sixmonth) # 3-step forecast
+rf12c=rf.rolling.window(df1,window.number,twelvemonth) # 3-step forecast
 toc() # measures the time taken, anywhere between 2-4 mins
 ```
 
@@ -69,26 +82,37 @@ toc() # measures the time taken, anywhere between 2-4 mins
 dates <- as.Date(rownames(df1))
 rmse.rf1c <- sqrt(mean((rf1c$actual - rf1c$pred)^2, na.rm = TRUE))
 rmse.rf3c <- sqrt(mean((rf3c$actual - rf3c$pred)^2, na.rm = TRUE))
+rmse.rf6c <- sqrt(mean((rf6c$actual - rf6c$pred)^2, na.rm = TRUE))
+rmse.rf12c <- sqrt(mean((rf12c$actual - rf12c$pred)^2, na.rm = TRUE))
 
 mae.rf1c <- mean(abs(rf1c$actual - rf1c$pred), na.rm = TRUE)
 mae.rf3c <- mean(abs(rf3c$actual - rf3c$pred), na.rm = TRUE)
-c(rmse.rf1c, mae.rf1c, rmse.rf3c, mae.rf3c)
+mae.rf6c <- mean(abs(rf6c$actual - rf6c$pred), na.rm = TRUE)
+mae.rf12c <- mean(abs(rf12c$actual - rf12c$pred), na.rm = TRUE)
+cat("1m  RMSE:", rmse.rf1c, " MAE:", mae.rf1c, "\n")
+cat("3m  RMSE:", rmse.rf3c, " MAE:", mae.rf3c, "\n") 
+cat("6m  RMSE:", rmse.rf6c, " MAE:", mae.rf6c, "\n")
+cat("12m RMSE:", rmse.rf12c, " MAE:", mae.rf12c, "\n")
 ```
 # Save results 
 ```{r}
 rf_results <- list(
   rf_1m = rf1c,
   rf_3m = rf3c,
+  rf_6m = rf6c,
+  rf_12m = rf12c,
   data_info = list(
     n_forecasts_1m = sum(!is.na(rf1c$pred)),
     n_forecasts_3m = sum(!is.na(rf3c$pred)),
+    n_forecasts_6m = sum(!is.na(rf6c$pred)),
+    n_forecasts_12m = sum(!is.na(rf12c$pred)),
     date_range = range(dates)  
   )
 )
 
 # (DONT RUN rf_results btw, unless you want your R to lag :D)
 # saving for dm test later
-# save(rf_results, file = "../modelresults/rf_results.RData")
+#save(rf_results, file = "../modelresults/rf_results.RData")
 ```
 # plot graph
 ```{r}

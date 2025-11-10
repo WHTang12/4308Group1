@@ -17,14 +17,22 @@ df1 <- df %>%
     # 3-month cumulative inflation
     inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
     # 3-month-ahead cumulative inflation
-    inflationRate_3m_future = lead(inflationRate_3m, 3)
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    # 6-month-ahead cumulative inflation
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    # 12-month-ahead cumulative inflation
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
   ) %>%
   select(-CPILFESL, -log_coreCPI, -log_lagcoreCPI, -inflationRate)
 
 ### --- Create 4 lags of all predictors, excluding Y --- ###
 # First identify the predictors 
 predictor_cols <- setdiff(names(df1), 
-                          c("sasdate", "year", "month", "inflationRate_1m_future", "inflationRate_3m_future"))
+                          c("sasdate", "year", "month", "inflationRate_1m_future", "inflationRate_3m_future", "inflationRate_6m_future", "inflationRate_12m_future"))
 
 # Then create lags
 pcr_data <- df1
@@ -42,11 +50,13 @@ pcr_data <- pcr_data %>%
 
 X <- pcr_data %>%
   select(-all_of(c("sasdate", "year", "month", 
-                   "inflationRate_1m_future", "inflationRate_3m_future"))) %>%
+                   "inflationRate_1m_future", "inflationRate_3m_future", "inflationRate_6m_future", "inflationRate_12m_future"))) %>%
   as.matrix()
 
 inflation1m <- pcr_data$inflationRate_1m_future
 inflation3m <- pcr_data$inflationRate_3m_future
+inflation6m <- pcr_data$inflationRate_6m_future
+inflation12m <- pcr_data$inflationRate_12m_future
 
 ### --- DETERMINING PCR OPTIMAL NUMBER OF COMPONENTS --- ###
 
@@ -112,6 +122,16 @@ cat("Chosen k for 1m model via BIC:", k_fixed_1m, "\n")
 y_tr_3m <- inflation3m[train_mask]
 k_fixed_3m <- choose_k_bic(X_tr_s, y_tr_3m, kmax = 20)
 cat("Chosen k for 3m model via BIC:", k_fixed_3m, "\n")
+
+# Use BIC to optimal (static) k for 6-month model
+y_tr_6m <- inflation6m[train_mask]
+k_fixed_6m <- choose_k_bic(X_tr_s, y_tr_6m, kmax = 20)
+cat("Chosen k for 6m model via BIC:", k_fixed_6m, "\n")
+
+# Use BIC to optimal (static) k for 12-month model
+y_tr_12m <- inflation12m[train_mask]
+k_fixed_12m <- choose_k_bic(X_tr_s, y_tr_12m, kmax = 20)
+cat("Chosen k for 12m model via BIC:", k_fixed_12m, "\n")
 
 
 ## --- Rolling PCR --- ###
@@ -188,34 +208,50 @@ nprev   <- 127 # 2015 -> 2025 july as OOS (127 months)
 # Static approach
 res_1mf <- roll_pcr(inflation1m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = k_fixed_1m)
 res_3mf <- roll_pcr(inflation3m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = k_fixed_3m)
+res_6mf <- roll_pcr(inflation6m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = k_fixed_6m)
+res_12mf <- roll_pcr(inflation12m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = k_fixed_12m)
 
 cat("PCR STATIC K (1m) RMSE:", res_1mf$RMSE, " MAE:", res_1mf$MAE, " | Min PC:", res_1mf$k_min, "Max PC:", res_1mf$k_max, "Final PC:", res_1mf$k_final, "\n")
 cat("PCR STATIC K (3m) RMSE:", res_3mf$RMSE, " MAE:", res_3mf$MAE, " | Min PC:", res_3mf$k_min, "Max PC:", res_3mf$k_max, "Final PC:", res_3mf$k_final, "\n")
+cat("PCR STATIC K (6m) RMSE:", res_6mf$RMSE, " MAE:", res_6mf$MAE, " | Min PC:", res_6mf$k_min, "Max PC:", res_6mf$k_max, "Final PC:", res_6mf$k_final, "\n")
+cat("PCR STATIC K (12m) RMSE:", res_12mf$RMSE, " MAE:", res_12mf$MAE, " | Min PC:", res_12mf$k_min, "Max PC:", res_12mf$k_max, "Final PC:", res_12mf$k_final, "\n")
 
 # Dynamic approach
 res_1m <- roll_pcr(inflation1m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = NULL)
 res_3m <- roll_pcr(inflation3m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = NULL)
+res_6m <- roll_pcr(inflation6m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = NULL)
+res_12m <- roll_pcr(inflation12m, X, nprev = nprev, win_len = win_len, kmax = 20, fixed_k = NULL)
 
 cat("PCR DYNAMIC K (1m) RMSE:", res_1m$RMSE, " MAE:", res_1m$MAE, " | Min PC:", res_1m$k_min, "Max PC:", res_1m$k_max, "Final PC:", res_1m$k_final, "\n")
 cat("PCR DYNAMIC K (3m) RMSE:", res_3m$RMSE, " MAE:", res_3m$MAE, " | Min PC:", res_3m$k_min, "Max PC:", res_3m$k_max, "Final PC:", res_3m$k_final, "\n")
+cat("PCR DYNAMIC K (6m) RMSE:", res_6m$RMSE, " MAE:", res_6m$MAE, " | Min PC:", res_6m$k_min, "Max PC:", res_6m$k_max, "Final PC:", res_6m$k_final, "\n")
+cat("PCR DYNAMIC K (12m) RMSE:", res_12m$RMSE, " MAE:", res_12m$MAE, " | Min PC:", res_12m$k_min, "Max PC:", res_12m$k_max, "Final PC:", res_12m$k_final, "\n")
 
 ### --- Save results --- ###
 results_pcr <- list(
   pcr_static_1m = res_1mf,
   pcr_static_3m = res_3mf,
+  pcr_static_6m = res_6mf,
+  pcr_static_12m = res_12mf,
   pcr_dynamic_1m = res_1m,
   pcr_dynamic_3m = res_3m,
+  pcr_dynamic_6m = res_6m,
+  pcr_dynamic_12m = res_12m,
   data_info = list(
     n_forecasts_1m = sum(!is.na(res_1m$pred)),
     n_forecasts_3m = sum(!is.na(res_3m$pred)),
+    n_forecasts_6m = sum(!is.na(res_6m$pred)),
+    n_forecasts_12m = sum(!is.na(res_12m$pred)),
     date_range = range(pcr_data$sasdate),
     static_k_1m = k_fixed_1m,
-    static_k_3m = k_fixed_3m
+    static_k_3m = k_fixed_3m,
+    static_k_6m = k_fixed_6m,
+    static_k_12m = k_fixed_12m
   )
 )
 
 # Save PCR results
-saveRDS(results_pcr, "../modelresults/pcr_complete_results.rds")
+#saveRDS(results_pcr, "../modelresults/pcr_complete_results.rds")
 
 # Load PCR results
 loaded_pcr <- readRDS("../modelresults/pcr_complete_results.rds")

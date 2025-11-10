@@ -1,6 +1,3 @@
-# Over here, we do targeted PCR, based on Bai & Ng (2018)
-# Idea is that we first determine which variables we are gonna consider in "making" our principal components
-
 # Import packages
 library(readr)
 library(dplyr)
@@ -20,19 +17,27 @@ df1 <- df %>%
     # 3-month cumulative inflation
     inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
     # 3-month-ahead cumulative inflation
-    inflationRate_3m_future = lead(inflationRate_3m, 3)
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    # 6-month-ahead cumulative inflation
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    # 12-month-ahead cumulative inflation
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
   ) %>%
   select(-CPILFESL, -log_coreCPI, -log_lagcoreCPI, -inflationRate)
 
 ### --- Create 4 lags of all predictors, excluding Y --- ###
 # First identify the predictors 
 predictor_cols <- setdiff(names(df1), 
-                          c("sasdate", "year", "month", "inflationRate_1m_future", "inflationRate_3m_future"))
+                          c("sasdate", "year", "month", "inflationRate_1m_future", "inflationRate_3m_future", "inflationRate_6m_future", "inflationRate_12m_future"))
 
 # Then create lags
 pcr_data <- df1
 for (col in predictor_cols) {
-  for (lag in 1:4) { # Only using 4 lags of each variable, can use more but don't want to explode number of variables
+  for (lag in 1:6) { # Only using 6 lags of each variable, can use more but don't want to explode number of variables
     # basically creating name + lag of the variable
     lag_name <- paste0(col, "_lag", lag)
     pcr_data[[lag_name]] <- lag(df1[[col]], lag)
@@ -44,11 +49,14 @@ pcr_data <- pcr_data %>%
   filter(year >= 1985)
 
 X <- pcr_data %>%
-  select(-all_of(c("sasdate", "year", "month", "inflationRate_1m_future", "inflationRate_3m_future"))) %>%
+  select(-all_of(c("sasdate", "year", "month", 
+                   "inflationRate_1m_future", "inflationRate_3m_future", "inflationRate_6m_future", "inflationRate_12m_future"))) %>%
   as.matrix()
 
 inflation1m <- pcr_data$inflationRate_1m_future
 inflation3m <- pcr_data$inflationRate_3m_future
+inflation6m <- pcr_data$inflationRate_6m_future
+inflation12m <- pcr_data$inflationRate_12m_future
 
 # First, we create helper function to help determine optimal k (detailed explanation in pcr.R)
 # Standardization is done in rolling window/prior to this. I should have instead included it here but its wtv
@@ -161,17 +169,30 @@ nprev   <- 127 # OOS period: Jan 2015 to July 2025
 # Run
 targeted_1m <- roll_targeted_pcr(inflation1m, X, nprev = nprev, win_len = win_len, kmax = 20, t_threshold = 1.96)
 targeted_3m <- roll_targeted_pcr(inflation3m, X, nprev = nprev, win_len = win_len, kmax = 20, t_threshold = 1.96)
+targeted_6m <- roll_targeted_pcr(inflation6m, X, nprev = nprev, win_len = win_len, kmax = 20, t_threshold = 1.96)
+targeted_12m <- roll_targeted_pcr(inflation12m, X, nprev = nprev, win_len = win_len, kmax = 20, t_threshold = 1.96)
+
+cat("TARGETED PCR (1m) RMSE:", targeted_1m$RMSE, " MAE:", targeted_1m$MAE, " | Min PC:", targeted_1m$k_min, "Max PC:", targeted_1m$k_max, "Final PC:", targeted_1m$k_final, "\n", "Average number of raw predictors used:", targeted_1m$avg_predictors_used, "\n")
+cat("TARGETED PCR (3m) RMSE:", targeted_3m$RMSE, " MAE:", targeted_3m$MAE, " | Min PC:", targeted_3m$k_min, "Max PC:", targeted_3m$k_max, "Final PC:", targeted_3m$k_final, "\n", "Average number of raw predictors used:", targeted_1m$avg_predictors_used, "\n")
+cat("TARGETED PCR (6m) RMSE:", targeted_6m$RMSE, " MAE:", targeted_6m$MAE, " | Min PC:", targeted_6m$k_min, "Max PC:", targeted_6m$k_max, "Final PC:", targeted_6m$k_final, "\n", "Average number of raw predictors used:", targeted_6m$avg_predictors_used, "\n")
+cat("TARGETED PCR (12m) RMSE:", targeted_12m$RMSE, " MAE:", targeted_12m$MAE, " | Min PC:", targeted_12m$k_min, "Max PC:", targeted_12m$k_max, "Final PC:", targeted_12m$k_final, "\n", "Average number of raw predictors used:", targeted_12m$avg_predictors_used, "\n")
 
 ### --- Save results --- ###
 results_targeted_pcr <- list(
   targeted_1m = targeted_1m,
   targeted_3m = targeted_3m,
+  targeted_6m = targeted_6m,
+  targeted_12m = targeted_12m,
   data_info = list(
     n_forecasts_1m = sum(!is.na(targeted_1m$pred)),
     n_forecasts_3m = sum(!is.na(targeted_3m$pred)),
+    n_forecasts_6m = sum(!is.na(targeted_6m$pred)),
+    n_forecasts_12m = sum(!is.na(targeted_12m$pred)),
     date_range = range(pcr_data$sasdate),
     avg_predictors_1m = targeted_1m$avg_predictors_used,
-    avg_predictors_3m = targeted_3m$avg_predictors_used
+    avg_predictors_3m = targeted_3m$avg_predictors_used,
+    avg_predictors_6m = targeted_6m$avg_predictors_used,
+    avg_predictors_12m = targeted_12m$avg_predictors_used
   )
 )
 
@@ -179,7 +200,7 @@ results_targeted_pcr <- list(
 #saveRDS(results_targeted_pcr, "../modelresults/targeted_pcr_results.rds")
 
 # Load PCR results
-loaded_targeted_pcr <- readRDS("../modelresults/targeted_pcr_results.rds")
+#loaded_targeted_pcr <- readRDS("../modelresults/targeted_pcr_results.rds")
 
 # Access results
 targeted_1m <- loaded_targeted_pcr$targeted_1m

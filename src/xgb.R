@@ -22,7 +22,15 @@ df1 <- df %>%
     # 3-month cumulative inflation
     inflationRate_3m = 100 * (log_coreCPI - lag(log_coreCPI, 3)),
     # 3-month-ahead cumulative inflation
-    inflationRate_3m_future = lead(inflationRate_3m, 3)
+    inflationRate_3m_future = lead(inflationRate_3m, 3),
+    # 6-month cumulative inflation
+    inflationRate_6m = 100 * (log_coreCPI - lag(log_coreCPI, 6)),
+    # 6-month-ahead cumulative inflation
+    inflationRate_6m_future = lead(inflationRate_6m, 6),
+    # 12-month cumulative inflation
+    inflationRate_12m = 100 * (log_coreCPI - lag(log_coreCPI, 12)),
+    # 12-month-ahead cumulative inflation
+    inflationRate_12m_future = lead(inflationRate_12m, 12)
   ) %>%
   select(-CPILFESL, -log_coreCPI, -log_lagcoreCPI, -inflationRate)
 
@@ -47,12 +55,14 @@ xgb_data <- xgb_data %>%
 
 X <- xgb_data %>%
   select(-all_of(c("sasdate", "year", "month", 
-                   "inflationRate_1m_future", "inflationRate_3m_future"))) %>%
+                   "inflationRate_1m_future", "inflationRate_3m_future", "inflationRate_6m_future", "inflationRate_12m_future"))) %>%
   as.matrix()
   
 # Target variables
 inflation1m <- xgb_data$inflationRate_1m_future
 inflation3m <- xgb_data$inflationRate_3m_future
+inflation6m <- xgb_data$inflationRate_6m_future
+inflation12m <- xgb_data$inflationRate_12m_future
 
 ## --- XGBoost Rolling Window Function --- ###
 rolling_xgb <- function(y, X, nprev = 120, win_len = 360) {
@@ -182,13 +192,25 @@ cat("XGB (1m) RMSE:", xgb_1m$RMSE, " MAE:", xgb_1m$MAE, "\n")
 xgb_3m <- rolling_xgb(inflation3m, X, nprev = nprev, win_len = win_len) # TAKES APPROX 5MINS
 cat("XGB (3m) RMSE:", xgb_3m$RMSE, " MAE:", xgb_3m$MAE, "\n")
 
+# 6-month ahead
+xgb_6m <- rolling_xgb(inflation6m, X, nprev = nprev, win_len = win_len) # TAKES APPROX 5MINS
+cat("XGB (6m) RMSE:", xgb_6m$RMSE, " MAE:", xgb_6m$MAE, "\n")
+
+# 12-month ahead
+xgb_12m <- rolling_xgb(inflation12m, X, nprev = nprev, win_len = win_len) # TAKES APPROX 5MINS
+cat("XGB (12m) RMSE:", xgb_12m$RMSE, " MAE:", xgb_12m$MAE, "\n")
+
 # Save data, bcos each function call takes like 3-5mins...
 results <- list(
   xgb_1m = xgb_1m,
   xgb_3m = xgb_3m,
+  xgb_6m = xgb_6m,
+  xgb_12m = xgb_12m,
   data_info = list(
     n_forecasts_1m = sum(!is.na(xgb_1m$pred)),
     n_forecasts_3m = sum(!is.na(xgb_3m$pred)),
+    n_forecasts_6m = sum(!is.na(xgb_6m$pred)),
+    n_forecasts_12m = sum(!is.na(xgb_12m$pred)),
     date_range = range(xgb_data$sasdate)
   )
 )
@@ -196,7 +218,7 @@ results <- list(
 #saveRDS(results, "../modelresults/xgb_complete_results.rds")
 
 # load in the saved results
-#loaded_results <- readRDS("../modelresults/xgb_complete_results.rds")
+loaded_results <- readRDS("../modelresults/xgb_complete_results.rds")
 xgb_1m <- loaded_results$xgb_1m
 xgb_3m <- loaded_results$xgb_3m
 

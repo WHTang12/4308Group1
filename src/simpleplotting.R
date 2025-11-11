@@ -1,9 +1,12 @@
+### --- Just for simple plots, can ignore --- ###
+
 library(readr)
 library(dplyr)
 library(lubridate)
 library(ggplot2) # for plotting
 library(scales) # for plotting
 
+### --- Inflation over time --- ###
 coreCPI <- read_csv("../data/CPILFESL.csv")
 df1 <- coreCPI %>%
   mutate(log_coreCPI = log(CPILFESL),
@@ -36,9 +39,17 @@ plot <- df1 %>%
   coord_cartesian(xlim = c(as.Date("1970-01-01"), NA)) 
 
 # Save with larger dimensions for better resolution
-ggsave("../figures/raw_core_cpi_inflation.png", 
-       plot = plot,
-       width = 10,
-       height = 5,
-       dpi = 300,
-       bg = "white")
+# ggsave("../figures/raw_core_cpi_inflation.png", 
+#        plot = plot,
+#        width = 10,
+#        height = 5,
+#        dpi = 300,
+#        bg = "white")
+
+### --- ACF plot of inflation --- ###
+df_1985 <- df1 %>% filter(year(ymd(observation_date)) >= 1985)
+
+# Save plot
+# png("../figures/acf_core_inflation.png", width = 800, height = 600)
+acf_plot <- acf(df_1985$inflationRate, main = "Autocorrelation of Monthly Core Inflation")
+# dev.off()
